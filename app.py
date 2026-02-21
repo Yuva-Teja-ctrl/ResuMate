@@ -4,7 +4,12 @@ from groq import Groq
 import json
 import re
 import pandas as pd
-from fpdf import FPDF
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import mm
+from reportlab.lib import colors
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, HRFlowable, Table, TableStyle
+from reportlab.lib.enums import TA_CENTER, TA_LEFT
 import io
 import time
 
@@ -320,136 +325,122 @@ def match_badge(label, text):
     return f'<span style="{st_color};border-radius:8px;padding:3px 10px;font-size:0.82rem;font-weight:600;margin-right:6px">{label}: {text}</span>'
 
 def clean(text):
-    """Remove emojis and non-ASCII characters, keep only clean printable text."""
+    """Remove emojis and non-printable characters."""
     import unicodedata
     text = str(text)
-    # Normalize unicode
     text = unicodedata.normalize("NFKD", text)
-    # Keep only ASCII printable characters
     cleaned = ""
     for ch in text:
-        if ord(ch) < 128:
+        if 32 <= ord(ch) < 127:
+            cleaned += ch
+        elif ch in ("\n", "\t"):
             cleaned += ch
         else:
             cleaned += " "
-    # Collapse multiple spaces
-    import re as _re
-    cleaned = _re.sub(r' +', ' ', cleaned).strip()
-    return cleaned
-
-def w(pdf, label, value, bold_label=True):
-    """Write a label+value pair, always wrapping to next line."""
-    full = clean(f"{label}{value}")
-    if not full.strip():
-        return
-    if bold_label and label:
-        # Write bold label then normal value
-        pdf.set_font("Helvetica", "B", 9)
-        pdf.multi_cell(0, 6, clean(label), ln=3)
-        pdf.set_font("Helvetica", "", 9)
-        pdf.multi_cell(0, 6, clean(str(value)))
-    else:
-        pdf.set_font("Helvetica", "", 9)
-        pdf.multi_cell(0, 6, full)
-    pdf.ln(1)
+    return re.sub(r" +", " ", cleaned).strip()
 
 def generate_pdf_report(results, job_role, skills, shortlist_count, min_experience="", education_pref="", certifications=""):
-    pdf = FPDF(orientation="P", unit="mm", format="A4")
-    pdf.set_margins(15, 15, 15)
-    pdf.set_auto_page_break(auto=True, margin=15)
-    pdf.add_page()
+    buffer = io.BytesIO()
+
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        rightMargin=20*mm,
+        leftMargin=20*mm,
+        topMargin=20*mm,
+        bottomMargin=20*mm
+    )
+
+    styles = getSampleStyleSheet()
+    style_normal   = ParagraphStyle("normal",   parent=styles["Normal"],   fontSize=9,  leading=14, spaceAfter=4)
+    style_bold     = ParagraphStyle("bold",     parent=styles["Normal"],   fontSize=9,  leading=14, spaceAfter=4, fontName="Helvetica-Bold")
+    style_title    = ParagraphStyle("title",    parent=styles["Title"],    fontSize=18, leading=22, spaceAfter=6, alignment=TA_CENTER)
+    style_subtitle = ParagraphStyle("subtitle", parent=styles["Normal"],   fontSize=9,  leading=13, spaceAfter=3, alignment=TA_CENTER)
+    style_h2       = ParagraphStyle("h2",       parent=styles["Normal"],   fontSize=12, leading=16, spaceAfter=4, fontName="Helvetica-Bold")
+    style_h3       = ParagraphStyle("h3",       parent=styles["Normal"],   fontSize=9,  leading=14, spaceAfter=2, fontName="Helvetica-Bold")
+    style_q        = ParagraphStyle("q",        parent=styles["Normal"],   fontSize=9,  leading=14, spaceAfter=4, leftIndent=10)
+
+    story = []
 
     # ── Title ──
-    pdf.set_font("Helvetica", "B", 18)
-    pdf.cell(0, 12, "ResuMate - Recruitment Report", ln=True, align="C")
-    pdf.set_font("Helvetica", "", 9)
-    pdf.multi_cell(0, 6, clean(f"Job Role: {job_role}"), align="C")
-    pdf.multi_cell(0, 6, clean(f"Required Skills: {skills}"), align="C")
-    if min_experience: pdf.multi_cell(0, 5, clean(f"Min Experience: {min_experience} yrs"), align="C")
-    if education_pref: pdf.multi_cell(0, 5, clean(f"Education Preference: {education_pref}"), align="C")
-    if certifications:  pdf.multi_cell(0, 5, clean(f"Preferred Certifications: {certifications}"), align="C")
-    pdf.multi_cell(0, 6, f"Total Analysed: {len(results)}  |  Shortlisted: {shortlist_count}", align="C")
-    pdf.ln(3)
-    pdf.line(15, pdf.get_y(), 195, pdf.get_y())
-    pdf.ln(4)
+    story.append(Paragraph("ResuMate - Recruitment Report", style_title))
+    story.append(Paragraph(clean(f"Job Role: {job_role}"), style_subtitle))
+    story.append(Paragraph(clean(f"Required Skills: {skills}"), style_subtitle))
+    if min_experience: story.append(Paragraph(clean(f"Min Experience: {min_experience} yrs"), style_subtitle))
+    if education_pref: story.append(Paragraph(clean(f"Education Preference: {education_pref}"), style_subtitle))
+    if certifications:  story.append(Paragraph(clean(f"Preferred Certifications: {certifications}"), style_subtitle))
+    story.append(Paragraph(f"Total Analysed: {len(results)}  |  Shortlisted: {shortlist_count}", style_subtitle))
+    story.append(Spacer(1, 4*mm))
+    story.append(HRFlowable(width="100%", thickness=1, color=colors.grey))
+    story.append(Spacer(1, 4*mm))
 
     for i, r in enumerate(results):
         d = r["score_data"]
         edu = d.get("education", {})
         certs = d.get("certifications", [])
         shortlisted = i < shortlist_count
+        sb = d.get("score_breakdown", {})
 
         # ── Candidate Header ──
-        pdf.set_font("Helvetica", "B", 13)
         status = "[SHORTLISTED]" if shortlisted else "[NOT SHORTLISTED]"
-        name = clean(d.get("candidate_name", "Unknown"))
-        score = d.get("score", 0)
-        pdf.multi_cell(0, 8, f"{status}  #{i+1}  {name}")
-        pdf.set_font("Helvetica", "B", 10)
-        pdf.cell(0, 6, f"Overall Score: {score}/100", ln=True)
+        name   = clean(d.get("candidate_name", "Unknown"))
+        score  = d.get("score", 0)
+        story.append(Paragraph(f"{status}  #{i+1}  {name}  |  Score: {score}/100", style_h2))
 
         # ── Score Breakdown ──
-        sb = d.get("score_breakdown", {})
-        pdf.set_font("Helvetica", "", 8)
-        pdf.multi_cell(0, 5, (
-            f"  Skills: {sb.get('skills_score',0)} pts  |  "
+        breakdown = clean(
+            f"Skills: {sb.get('skills_score',0)} pts  |  "
             f"Experience: {sb.get('experience_score',0)} pts  |  "
             f"Education: {sb.get('education_score',0)} pts  |  "
             f"Certifications: {sb.get('certification_score',0)} pts"
-        ))
-        pdf.ln(2)
+        )
+        story.append(Paragraph(breakdown, style_normal))
+        story.append(Spacer(1, 2*mm))
 
         # ── Details ──
-        pdf.set_font("Helvetica", "", 9)
+        def row(label, value):
+            story.append(Paragraph(f"<b>{clean(label)}</b> {clean(str(value))}", style_normal))
 
-        w(pdf, "Experience: ", d.get("experience_years", "N/A"), bold_label=False)
+        row("Experience:", d.get("experience_years", "N/A"))
 
-        degree   = clean(edu.get("highest_degree", "Not mentioned"))
-        institut = clean(edu.get("institution", "Not mentioned"))
-        grad     = clean(edu.get("graduation_year", ""))
+        degree   = edu.get("highest_degree", "Not mentioned")
+        institut = edu.get("institution", "Not mentioned")
+        grad     = edu.get("graduation_year", "")
         edu_str  = degree
         if institut and institut not in ("Not mentioned", ""):
             edu_str += f", {institut}"
         if grad and grad not in ("Not mentioned", ""):
             edu_str += f" ({grad})"
-        w(pdf, "Education: ", edu_str, bold_label=False)
-        w(pdf, "Education Match: ", d.get("education_match", "N/A"), bold_label=False)
+        row("Education:", edu_str)
+        row("Education Match:", d.get("education_match", "N/A"))
 
-        cert_str = clean(", ".join(certs)) if certs else "None found"
-        w(pdf, "Certifications: ", cert_str, bold_label=False)
-        w(pdf, "Certification Match: ", d.get("certification_match", "N/A"), bold_label=False)
+        cert_str = ", ".join(certs) if certs else "None found"
+        row("Certifications:", cert_str)
+        row("Certification Match:", d.get("certification_match", "N/A"))
 
-        matched = clean(", ".join(d.get("matched_skills", []))) or "None"
-        missing = clean(", ".join(d.get("missing_skills", []))) or "None"
-        w(pdf, "Matched Skills: ", matched, bold_label=False)
-        w(pdf, "Missing Skills: ", missing, bold_label=False)
+        matched = ", ".join(d.get("matched_skills", [])) or "None"
+        missing = ", ".join(d.get("missing_skills", [])) or "None"
+        row("Matched Skills:", matched)
+        row("Missing Skills:", missing)
 
-        pdf.set_font("Helvetica", "B", 9)
-        pdf.cell(0, 6, "Strengths:", ln=True)
-        pdf.set_font("Helvetica", "", 9)
-        pdf.multi_cell(0, 5, clean(d.get("strengths", "")))
-        pdf.ln(1)
-
-        pdf.set_font("Helvetica", "B", 9)
-        pdf.cell(0, 6, "Gaps:", ln=True)
-        pdf.set_font("Helvetica", "", 9)
-        pdf.multi_cell(0, 5, clean(d.get("weaknesses", "")))
-        pdf.ln(1)
+        story.append(Spacer(1, 2*mm))
+        story.append(Paragraph(f"<b>Strengths:</b> {clean(d.get('strengths',''))}", style_normal))
+        story.append(Paragraph(f"<b>Gaps:</b> {clean(d.get('weaknesses',''))}", style_normal))
 
         # ── Interview Questions ──
         if shortlisted and r.get("questions"):
-            pdf.set_font("Helvetica", "B", 9)
-            pdf.cell(0, 7, "Interview Questions:", ln=True)
-            pdf.set_font("Helvetica", "", 9)
+            story.append(Spacer(1, 2*mm))
+            story.append(Paragraph("Interview Questions:", style_h3))
             for j, q in enumerate(r["questions"], 1):
-                pdf.multi_cell(0, 5, clean(f"Q{j}. {q}"))
-                pdf.ln(1)
+                story.append(Paragraph(clean(f"Q{j}. {q}"), style_q))
 
-        pdf.ln(2)
-        pdf.line(15, pdf.get_y(), 195, pdf.get_y())
-        pdf.ln(4)
+        story.append(Spacer(1, 4*mm))
+        story.append(HRFlowable(width="100%", thickness=0.5, color=colors.lightgrey))
+        story.append(Spacer(1, 4*mm))
 
-    return bytes(pdf.output())
+    doc.build(story)
+    buffer.seek(0)
+    return buffer.read()
 
 # ── FORM ─────────────────────────────────────────────────────
 
