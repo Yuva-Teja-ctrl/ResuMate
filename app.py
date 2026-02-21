@@ -263,8 +263,12 @@ Required Skills: {skills}
 Resume:
 {resume_text[:2500]}
 
-Return ONLY a JSON array of 10 strings. No markdown, no numbering.
-["Question 1", ..., "Question 10"]
+STRICT RULES:
+- Return ONLY a valid JSON array of exactly 10 strings
+- Each question must be a COMPLETE full sentence ending with a question mark
+- No truncation, no incomplete sentences
+- No markdown, no numbering, no explanation
+- Format: ["Complete question 1?", "Complete question 2?", ..., "Complete question 10?"]
 """
     client = st.session_state.get("groq_client") or Groq(api_key=st.session_state.get("api_key",""))
     for attempt in range(3):
@@ -273,7 +277,7 @@ Return ONLY a JSON array of 10 strings. No markdown, no numbering.
                 model="llama-3.3-70b-versatile",
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.3,
-                max_tokens=1000,
+                max_tokens=2500,
             )
             raw = response.choices[0].message.content.strip()
             break
@@ -283,8 +287,13 @@ Return ONLY a JSON array of 10 strings. No markdown, no numbering.
             else:
                 raise e
     raw = re.sub(r"```(?:json)?", "", raw).strip().rstrip("`").strip()
+    # Fix incomplete last item if JSON was cut off
+    if raw.count('[') > raw.count(']'):
+        raw = raw.rstrip(',').rstrip() + ']'  
     try:
         q = json.loads(raw)
+        # Filter out any incomplete questions (not ending with ?)
+        q = [item for item in q if isinstance(item, str) and len(item) > 10]
         return q if isinstance(q, list) else []
     except:
         m = re.search(r'\[.*\]', raw, re.DOTALL)
