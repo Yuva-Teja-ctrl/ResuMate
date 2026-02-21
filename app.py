@@ -266,9 +266,23 @@ Resume:
 Return ONLY a JSON array of 10 strings. No markdown, no numbering.
 ["Question 1", ..., "Question 10"]
 """
-    model = genai.GenerativeModel("gemini-2.0-flash-lite")
-    raw = model.generate_content(prompt).text.strip()
-    raw = re.sub(r"```(?:json)?", "", raw).strip().rstrip("```").strip()
+    client = st.session_state.get("groq_client") or Groq(api_key=st.session_state.get("api_key",""))
+    for attempt in range(3):
+        try:
+            response = client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.3,
+                max_tokens=1000,
+            )
+            raw = response.choices[0].message.content.strip()
+            break
+        except Exception as e:
+            if "429" in str(e) and attempt < 2:
+                time.sleep(20 + attempt * 10)
+            else:
+                raise e
+    raw = re.sub(r"```(?:json)?", "", raw).strip().rstrip("`").strip()
     try:
         q = json.loads(raw)
         return q if isinstance(q, list) else []
