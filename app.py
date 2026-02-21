@@ -296,47 +296,109 @@ def match_badge(label, text):
 def safe(text):
     return str(text).encode("latin-1", "replace").decode("latin-1")
 
+def wrap(text, max_chars=90):
+    """Truncate long text to avoid FPDF horizontal overflow."""
+    text = str(text)
+    if len(text) <= max_chars:
+        return text
+    return text[:max_chars - 3] + "..."
+
+def pdf_line(pdf, label, value, max_chars=85):
+    """Safe single line — truncates if too long."""
+    text = safe(f"{label}{value}")
+    if len(text) > max_chars:
+        text = text[:max_chars - 3] + "..."
+    pdf.cell(0, 7, text, ln=True)
+
+def pdf_multi(pdf, label, value):
+    """Safe multi-line cell for long text."""
+    text = safe(f"{label}{value}")
+    pdf.multi_cell(0, 6, text)
+    pdf.ln(1)
+
 def generate_pdf_report(results, job_role, skills, shortlist_count, min_experience="", education_pref="", certifications=""):
-    pdf = FPDF()
+    pdf = FPDF(orientation="P", unit="mm", format="A4")
+    pdf.set_margins(15, 15, 15)
     pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
-    pdf.set_font("Helvetica","B",20)
-    pdf.cell(0,12,"ResuMate - Recruitment Report",ln=True,align="C")
-    pdf.set_font("Helvetica","",10)
-    pdf.cell(0,7,safe(f"Job Role: {job_role}  |  Skills: {skills}"),ln=True,align="C")
-    if min_experience: pdf.cell(0,6,f"Min Experience: {min_experience} yrs",ln=True,align="C")
-    if education_pref: pdf.cell(0,6,safe(f"Education Preference: {education_pref}"),ln=True,align="C")
-    if certifications:  pdf.cell(0,6,safe(f"Preferred Certifications: {certifications}"),ln=True,align="C")
-    pdf.cell(0,7,f"Total Analysed: {len(results)}  |  Shortlisted: {shortlist_count}",ln=True,align="C")
-    pdf.ln(4); pdf.line(10,pdf.get_y(),200,pdf.get_y()); pdf.ln(4)
+
+    # ── Title ──
+    pdf.set_font("Helvetica", "B", 18)
+    pdf.cell(0, 12, "ResuMate - Recruitment Report", ln=True, align="C")
+    pdf.set_font("Helvetica", "", 9)
+    pdf.multi_cell(0, 6, safe(f"Job Role: {job_role}  |  Skills: {wrap(skills, 80)}"), align="C")
+    if min_experience: pdf.cell(0, 5, safe(f"Min Experience: {min_experience} yrs"), ln=True, align="C")
+    if education_pref: pdf.cell(0, 5, safe(f"Education: {wrap(education_pref, 80)}"), ln=True, align="C")
+    if certifications:  pdf.cell(0, 5, safe(f"Certifications: {wrap(certifications, 80)}"), ln=True, align="C")
+    pdf.cell(0, 6, f"Total Analysed: {len(results)}  |  Shortlisted: {shortlist_count}", ln=True, align="C")
+    pdf.ln(3)
+    pdf.line(15, pdf.get_y(), 195, pdf.get_y())
+    pdf.ln(4)
 
     for i, r in enumerate(results):
         d = r["score_data"]
-        edu = d.get("education",{})
+        edu = d.get("education", {})
+        certs = d.get("certifications", [])
         shortlisted = i < shortlist_count
-        pdf.set_font("Helvetica","B",13)
-        label = "[SHORTLISTED] " if shortlisted else ""
-        pdf.cell(0,10,safe(f"{label}#{i+1} {d.get('candidate_name','Unknown')} - Score: {d.get('score',0)}/100"),ln=True)
-        pdf.set_font("Helvetica","",10)
-        pdf.cell(0,7,f"Experience: {d.get('experience_years','N/A')}",ln=True)
-        pdf.cell(0,7,safe(f"Education: {edu.get('highest_degree','N/A')} | {edu.get('institution','N/A')} | {edu.get('graduation_year','N/A')}"),ln=True)
-        pdf.cell(0,7,f"Education Match: {d.get('education_match','N/A')}",ln=True)
-        certs = d.get("certifications",[])
-        pdf.cell(0,7,safe(f"Certifications: {', '.join(certs) if certs else 'None found'}"),ln=True)
-        pdf.cell(0,7,f"Certification Match: {d.get('certification_match','N/A')}",ln=True)
-        pdf.cell(0,7,safe(f"Matched Skills: {', '.join(d.get('matched_skills',[]))}"),ln=True)
-        pdf.cell(0,7,safe(f"Missing Skills: {', '.join(d.get('missing_skills',[]))}"),ln=True)
-        pdf.multi_cell(0,7,safe(f"Strengths: {d.get('strengths','')}"))
-        pdf.multi_cell(0,7,safe(f"Gaps: {d.get('weaknesses','')}"))
-        if shortlisted and r.get("questions"):
-            pdf.set_font("Helvetica","B",10)
-            pdf.cell(0,8,"Interview Questions:",ln=True)
-            pdf.set_font("Helvetica","",9)
-            for j,q in enumerate(r["questions"],1):
-                pdf.multi_cell(0,6,safe(f"  {j}. {q}"))
-        pdf.ln(3); pdf.line(10,pdf.get_y(),200,pdf.get_y()); pdf.ln(3)
 
-    return pdf.output(dest="S").encode("latin-1")
+        # ── Candidate Header ──
+        pdf.set_font("Helvetica", "B", 12)
+        label = "[SHORTLISTED] " if shortlisted else ""
+        name = wrap(d.get("candidate_name", "Unknown"), 40)
+        score = d.get("score", 0)
+        pdf.cell(0, 9, safe(f"{label}#{i+1}  {name}  |  Score: {score}/100"), ln=True)
+
+        # ── Score Breakdown ──
+        sb = d.get("score_breakdown", {})
+        pdf.set_font("Helvetica", "", 8)
+        breakdown = (f"Skills: {sb.get('skills_score',0)}  |  "
+                     f"Experience: {sb.get('experience_score',0)}  |  "
+                     f"Education: {sb.get('education_score',0)}  |  "
+                     f"Certifications: {sb.get('certification_score',0)}")
+        pdf.cell(0, 5, safe(breakdown), ln=True)
+        pdf.ln(1)
+
+        # ── Details ──
+        pdf.set_font("Helvetica", "", 9)
+        pdf_line(pdf, "Experience:       ", d.get("experience_years", "N/A"))
+
+        degree   = wrap(edu.get("highest_degree", "Not mentioned"), 50)
+        institut = wrap(edu.get("institution", "Not mentioned"), 40)
+        grad     = edu.get("graduation_year", "")
+        edu_str  = degree
+        if institut and institut != "Not mentioned": edu_str += f", {institut}"
+        if grad and grad != "Not mentioned": edu_str += f" ({grad})"
+        pdf_line(pdf, "Education:        ", edu_str)
+        pdf_line(pdf, "Education Match:  ", d.get("education_match", "N/A"))
+
+        cert_str = wrap(", ".join(certs) if certs else "None found", 80)
+        pdf_line(pdf, "Certifications:   ", cert_str)
+        pdf_line(pdf, "Cert Match:       ", d.get("certification_match", "N/A"))
+
+        matched  = wrap(", ".join(d.get("matched_skills", [])), 80)
+        missing  = wrap(", ".join(d.get("missing_skills", [])), 80)
+        pdf_line(pdf, "Matched Skills:   ", matched or "None")
+        pdf_line(pdf, "Missing Skills:   ", missing or "None")
+
+        pdf.ln(1)
+        pdf_multi(pdf, "Strengths: ", d.get("strengths", ""))
+        pdf_multi(pdf, "Gaps:      ", d.get("weaknesses", ""))
+
+        # ── Interview Questions ──
+        if shortlisted and r.get("questions"):
+            pdf.set_font("Helvetica", "B", 9)
+            pdf.cell(0, 7, "Interview Questions:", ln=True)
+            pdf.set_font("Helvetica", "", 8)
+            for j, q in enumerate(r["questions"], 1):
+                q_safe = safe(f"  Q{j}. {wrap(q, 100)}")
+                pdf.multi_cell(0, 5, q_safe)
+                pdf.ln(1)
+
+        pdf.ln(2)
+        pdf.line(15, pdf.get_y(), 195, pdf.get_y())
+        pdf.ln(4)
+
+    return bytes(pdf.output())
 
 # ── FORM ─────────────────────────────────────────────────────
 
