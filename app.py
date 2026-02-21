@@ -249,27 +249,30 @@ def generate_interview_questions(resume_text, job_role, skills, candidate_name, 
     if education_pref: ctx += f"\nEducation Background: {education_pref}"
     if certifications:  ctx += f"\nCertifications to probe: {certifications}"
 
-    prompt = f"""
-You are an expert technical interviewer.
-Generate exactly 10 interview questions for this candidate.
-Mix technical, behavioral, and situational questions.
-Include questions about education and certifications if provided.
+    prompt = f"""You are an expert technical interviewer. Generate exactly 10 complete interview questions.
 
-Candidate: {candidate_name}
 Job Role: {job_role}
-Required Skills: {skills}
-{ctx}
+Candidate: {candidate_name}
+Skills Required: {skills}{ctx}
 
-Resume:
-{resume_text[:2500]}
+Resume (summary):
+{resume_text[:1200]}
 
-STRICT RULES:
-- Return ONLY a valid JSON array of exactly 10 strings
-- Each question must be a COMPLETE full sentence ending with a question mark
-- No truncation, no incomplete sentences
-- No markdown, no numbering, no explanation
-- Format: ["Complete question 1?", "Complete question 2?", ..., "Complete question 10?"]
-"""
+OUTPUT FORMAT - Return ONLY this JSON array, nothing else:
+[
+  "First complete interview question ending with question mark?",
+  "Second complete interview question ending with question mark?",
+  "Third complete interview question ending with question mark?",
+  "Fourth complete interview question ending with question mark?",
+  "Fifth complete interview question ending with question mark?",
+  "Sixth complete interview question ending with question mark?",
+  "Seventh complete interview question ending with question mark?",
+  "Eighth complete interview question ending with question mark?",
+  "Ninth complete interview question ending with question mark?",
+  "Tenth complete interview question ending with question mark?"
+]
+
+Rules: Each question must be complete and end with ?. No truncation. No explanation outside the array."""
     client = st.session_state.get("groq_client") or Groq(api_key=st.session_state.get("api_key",""))
     for attempt in range(3):
         try:
@@ -319,22 +322,18 @@ def match_badge(label, text):
 def safe(text):
     return str(text).encode("latin-1", "replace").decode("latin-1")
 
-def wrap(text, max_chars=90):
-    """Truncate long text to avoid FPDF horizontal overflow."""
-    text = str(text)
-    if len(text) <= max_chars:
-        return text
-    return text[:max_chars - 3] + "..."
+def wrap(text, max_chars=9999):
+    """No truncation — always return full text."""
+    return str(text)
 
-def pdf_line(pdf, label, value, max_chars=85):
-    """Safe single line — truncates if too long."""
+def pdf_line(pdf, label, value):
+    """Always wraps to next line if text is too long."""
     text = safe(f"{label}{value}")
-    if len(text) > max_chars:
-        text = text[:max_chars - 3] + "..."
-    pdf.cell(0, 7, text, ln=True)
+    pdf.multi_cell(0, 6, text)
+    pdf.ln(1)
 
 def pdf_multi(pdf, label, value):
-    """Safe multi-line cell for long text."""
+    """Multi-line cell for long text."""
     text = safe(f"{label}{value}")
     pdf.multi_cell(0, 6, text)
     pdf.ln(1)
@@ -349,10 +348,10 @@ def generate_pdf_report(results, job_role, skills, shortlist_count, min_experien
     pdf.set_font("Helvetica", "B", 18)
     pdf.cell(0, 12, "ResuMate - Recruitment Report", ln=True, align="C")
     pdf.set_font("Helvetica", "", 9)
-    pdf.multi_cell(0, 6, safe(f"Job Role: {job_role}  |  Skills: {wrap(skills, 80)}"), align="C")
-    if min_experience: pdf.cell(0, 5, safe(f"Min Experience: {min_experience} yrs"), ln=True, align="C")
-    if education_pref: pdf.cell(0, 5, safe(f"Education: {wrap(education_pref, 80)}"), ln=True, align="C")
-    if certifications:  pdf.cell(0, 5, safe(f"Certifications: {wrap(certifications, 80)}"), ln=True, align="C")
+    pdf.multi_cell(0, 6, safe(f"Job Role: {job_role}  |  Skills: {skills}"), align="C")
+    if min_experience: pdf.multi_cell(0, 5, safe(f"Min Experience: {min_experience} yrs"), align="C")
+    if education_pref: pdf.multi_cell(0, 5, safe(f"Education Preference: {education_pref}"), align="C")
+    if certifications:  pdf.multi_cell(0, 5, safe(f"Preferred Certifications: {certifications}"), align="C")
     pdf.cell(0, 6, f"Total Analysed: {len(results)}  |  Shortlisted: {shortlist_count}", ln=True, align="C")
     pdf.ln(3)
     pdf.line(15, pdf.get_y(), 195, pdf.get_y())
@@ -367,9 +366,9 @@ def generate_pdf_report(results, job_role, skills, shortlist_count, min_experien
         # ── Candidate Header ──
         pdf.set_font("Helvetica", "B", 12)
         label = "[SHORTLISTED] " if shortlisted else ""
-        name = wrap(d.get("candidate_name", "Unknown"), 40)
+        name = d.get("candidate_name", "Unknown")
         score = d.get("score", 0)
-        pdf.cell(0, 9, safe(f"{label}#{i+1}  {name}  |  Score: {score}/100"), ln=True)
+        pdf.multi_cell(0, 9, safe(f"{label}#{i+1}  {name}  |  Score: {score}/100"))
 
         # ── Score Breakdown ──
         sb = d.get("score_breakdown", {})
@@ -385,8 +384,8 @@ def generate_pdf_report(results, job_role, skills, shortlist_count, min_experien
         pdf.set_font("Helvetica", "", 9)
         pdf_line(pdf, "Experience:       ", d.get("experience_years", "N/A"))
 
-        degree   = wrap(edu.get("highest_degree", "Not mentioned"), 50)
-        institut = wrap(edu.get("institution", "Not mentioned"), 40)
+        degree   = edu.get("highest_degree", "Not mentioned")
+        institut = edu.get("institution", "Not mentioned")
         grad     = edu.get("graduation_year", "")
         edu_str  = degree
         if institut and institut != "Not mentioned": edu_str += f", {institut}"
@@ -394,14 +393,18 @@ def generate_pdf_report(results, job_role, skills, shortlist_count, min_experien
         pdf_line(pdf, "Education:        ", edu_str)
         pdf_line(pdf, "Education Match:  ", d.get("education_match", "N/A"))
 
-        cert_str = wrap(", ".join(certs) if certs else "None found", 80)
-        pdf_line(pdf, "Certifications:   ", cert_str)
+        cert_str = safe(", ".join(certs) if certs else "None found")
+        pdf.set_font("Helvetica", "B", 9)
+        pdf.cell(0, 6, "Certifications:", ln=True)
+        pdf.set_font("Helvetica", "", 9)
+        pdf.multi_cell(0, 5, cert_str)
+        pdf.ln(1)
         pdf_line(pdf, "Cert Match:       ", d.get("certification_match", "N/A"))
 
-        matched  = wrap(", ".join(d.get("matched_skills", [])), 80)
-        missing  = wrap(", ".join(d.get("missing_skills", [])), 80)
-        pdf_line(pdf, "Matched Skills:   ", matched or "None")
-        pdf_line(pdf, "Missing Skills:   ", missing or "None")
+        matched = ", ".join(d.get("matched_skills", [])) or "None"
+        missing = ", ".join(d.get("missing_skills", [])) or "None"
+        pdf_line(pdf, "Matched Skills:   ", matched)
+        pdf_line(pdf, "Missing Skills:   ", missing)
 
         pdf.ln(1)
         pdf_multi(pdf, "Strengths: ", d.get("strengths", ""))
@@ -413,7 +416,7 @@ def generate_pdf_report(results, job_role, skills, shortlist_count, min_experien
             pdf.cell(0, 7, "Interview Questions:", ln=True)
             pdf.set_font("Helvetica", "", 8)
             for j, q in enumerate(r["questions"], 1):
-                q_safe = safe(f"  Q{j}. {wrap(q, 100)}")
+                q_safe = safe(f"Q{j}. {q}")
                 pdf.multi_cell(0, 5, q_safe)
                 pdf.ln(1)
 
