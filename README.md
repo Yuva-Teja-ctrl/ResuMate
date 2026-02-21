@@ -25,7 +25,7 @@ ResuMate is a recruiter-facing AI tool that:
 
 ## 🖥️ Live Demo
 
-[🚀 Try it on Streamlit Cloud →](#) *(add your link after deployment)*
+[🚀 Try it Live on Streamlit Cloud →](https://resumate-o5jckmumwbk6z2bpjgpwts.streamlit.app)
 
 ---
 
