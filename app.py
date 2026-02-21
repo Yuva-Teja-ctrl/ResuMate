@@ -319,23 +319,38 @@ def match_badge(label, text):
     else: st_color = "background:#f1f5f9;color:#64748b"
     return f'<span style="{st_color};border-radius:8px;padding:3px 10px;font-size:0.82rem;font-weight:600;margin-right:6px">{label}: {text}</span>'
 
-def safe(text):
-    return str(text).encode("latin-1", "replace").decode("latin-1")
+def clean(text):
+    """Remove emojis and non-ASCII characters, keep only clean printable text."""
+    import unicodedata
+    text = str(text)
+    # Normalize unicode
+    text = unicodedata.normalize("NFKD", text)
+    # Keep only ASCII printable characters
+    cleaned = ""
+    for ch in text:
+        if ord(ch) < 128:
+            cleaned += ch
+        else:
+            cleaned += " "
+    # Collapse multiple spaces
+    import re as _re
+    cleaned = _re.sub(r' +', ' ', cleaned).strip()
+    return cleaned
 
-def wrap(text, max_chars=9999):
-    """No truncation — always return full text."""
-    return str(text)
-
-def pdf_line(pdf, label, value):
-    """Always wraps to next line if text is too long."""
-    text = safe(f"{label}{value}")
-    pdf.multi_cell(0, 6, text)
-    pdf.ln(1)
-
-def pdf_multi(pdf, label, value):
-    """Multi-line cell for long text."""
-    text = safe(f"{label}{value}")
-    pdf.multi_cell(0, 6, text)
+def w(pdf, label, value, bold_label=True):
+    """Write a label+value pair, always wrapping to next line."""
+    full = clean(f"{label}{value}")
+    if not full.strip():
+        return
+    if bold_label and label:
+        # Write bold label then normal value
+        pdf.set_font("Helvetica", "B", 9)
+        pdf.multi_cell(0, 6, clean(label), ln=3)
+        pdf.set_font("Helvetica", "", 9)
+        pdf.multi_cell(0, 6, clean(str(value)))
+    else:
+        pdf.set_font("Helvetica", "", 9)
+        pdf.multi_cell(0, 6, full)
     pdf.ln(1)
 
 def generate_pdf_report(results, job_role, skills, shortlist_count, min_experience="", education_pref="", certifications=""):
@@ -348,11 +363,12 @@ def generate_pdf_report(results, job_role, skills, shortlist_count, min_experien
     pdf.set_font("Helvetica", "B", 18)
     pdf.cell(0, 12, "ResuMate - Recruitment Report", ln=True, align="C")
     pdf.set_font("Helvetica", "", 9)
-    pdf.multi_cell(0, 6, safe(f"Job Role: {job_role}  |  Skills: {skills}"), align="C")
-    if min_experience: pdf.multi_cell(0, 5, safe(f"Min Experience: {min_experience} yrs"), align="C")
-    if education_pref: pdf.multi_cell(0, 5, safe(f"Education Preference: {education_pref}"), align="C")
-    if certifications:  pdf.multi_cell(0, 5, safe(f"Preferred Certifications: {certifications}"), align="C")
-    pdf.cell(0, 6, f"Total Analysed: {len(results)}  |  Shortlisted: {shortlist_count}", ln=True, align="C")
+    pdf.multi_cell(0, 6, clean(f"Job Role: {job_role}"), align="C")
+    pdf.multi_cell(0, 6, clean(f"Required Skills: {skills}"), align="C")
+    if min_experience: pdf.multi_cell(0, 5, clean(f"Min Experience: {min_experience} yrs"), align="C")
+    if education_pref: pdf.multi_cell(0, 5, clean(f"Education Preference: {education_pref}"), align="C")
+    if certifications:  pdf.multi_cell(0, 5, clean(f"Preferred Certifications: {certifications}"), align="C")
+    pdf.multi_cell(0, 6, f"Total Analysed: {len(results)}  |  Shortlisted: {shortlist_count}", align="C")
     pdf.ln(3)
     pdf.line(15, pdf.get_y(), 195, pdf.get_y())
     pdf.ln(4)
@@ -364,60 +380,69 @@ def generate_pdf_report(results, job_role, skills, shortlist_count, min_experien
         shortlisted = i < shortlist_count
 
         # ── Candidate Header ──
-        pdf.set_font("Helvetica", "B", 12)
-        label = "[SHORTLISTED] " if shortlisted else ""
-        name = d.get("candidate_name", "Unknown")
+        pdf.set_font("Helvetica", "B", 13)
+        status = "[SHORTLISTED]" if shortlisted else "[NOT SHORTLISTED]"
+        name = clean(d.get("candidate_name", "Unknown"))
         score = d.get("score", 0)
-        pdf.multi_cell(0, 9, safe(f"{label}#{i+1}  {name}  |  Score: {score}/100"))
+        pdf.multi_cell(0, 8, f"{status}  #{i+1}  {name}")
+        pdf.set_font("Helvetica", "B", 10)
+        pdf.cell(0, 6, f"Overall Score: {score}/100", ln=True)
 
         # ── Score Breakdown ──
         sb = d.get("score_breakdown", {})
         pdf.set_font("Helvetica", "", 8)
-        breakdown = (f"Skills: {sb.get('skills_score',0)}  |  "
-                     f"Experience: {sb.get('experience_score',0)}  |  "
-                     f"Education: {sb.get('education_score',0)}  |  "
-                     f"Certifications: {sb.get('certification_score',0)}")
-        pdf.cell(0, 5, safe(breakdown), ln=True)
-        pdf.ln(1)
+        pdf.multi_cell(0, 5, (
+            f"  Skills: {sb.get('skills_score',0)} pts  |  "
+            f"Experience: {sb.get('experience_score',0)} pts  |  "
+            f"Education: {sb.get('education_score',0)} pts  |  "
+            f"Certifications: {sb.get('certification_score',0)} pts"
+        ))
+        pdf.ln(2)
 
         # ── Details ──
         pdf.set_font("Helvetica", "", 9)
-        pdf_line(pdf, "Experience:       ", d.get("experience_years", "N/A"))
 
-        degree   = edu.get("highest_degree", "Not mentioned")
-        institut = edu.get("institution", "Not mentioned")
-        grad     = edu.get("graduation_year", "")
+        w(pdf, "Experience: ", d.get("experience_years", "N/A"), bold_label=False)
+
+        degree   = clean(edu.get("highest_degree", "Not mentioned"))
+        institut = clean(edu.get("institution", "Not mentioned"))
+        grad     = clean(edu.get("graduation_year", ""))
         edu_str  = degree
-        if institut and institut != "Not mentioned": edu_str += f", {institut}"
-        if grad and grad != "Not mentioned": edu_str += f" ({grad})"
-        pdf_line(pdf, "Education:        ", edu_str)
-        pdf_line(pdf, "Education Match:  ", d.get("education_match", "N/A"))
+        if institut and institut not in ("Not mentioned", ""):
+            edu_str += f", {institut}"
+        if grad and grad not in ("Not mentioned", ""):
+            edu_str += f" ({grad})"
+        w(pdf, "Education: ", edu_str, bold_label=False)
+        w(pdf, "Education Match: ", d.get("education_match", "N/A"), bold_label=False)
 
-        cert_str = safe(", ".join(certs) if certs else "None found")
+        cert_str = clean(", ".join(certs)) if certs else "None found"
+        w(pdf, "Certifications: ", cert_str, bold_label=False)
+        w(pdf, "Certification Match: ", d.get("certification_match", "N/A"), bold_label=False)
+
+        matched = clean(", ".join(d.get("matched_skills", []))) or "None"
+        missing = clean(", ".join(d.get("missing_skills", []))) or "None"
+        w(pdf, "Matched Skills: ", matched, bold_label=False)
+        w(pdf, "Missing Skills: ", missing, bold_label=False)
+
         pdf.set_font("Helvetica", "B", 9)
-        pdf.cell(0, 6, "Certifications:", ln=True)
+        pdf.cell(0, 6, "Strengths:", ln=True)
         pdf.set_font("Helvetica", "", 9)
-        pdf.multi_cell(0, 5, cert_str)
+        pdf.multi_cell(0, 5, clean(d.get("strengths", "")))
         pdf.ln(1)
-        pdf_line(pdf, "Cert Match:       ", d.get("certification_match", "N/A"))
 
-        matched = ", ".join(d.get("matched_skills", [])) or "None"
-        missing = ", ".join(d.get("missing_skills", [])) or "None"
-        pdf_line(pdf, "Matched Skills:   ", matched)
-        pdf_line(pdf, "Missing Skills:   ", missing)
-
+        pdf.set_font("Helvetica", "B", 9)
+        pdf.cell(0, 6, "Gaps:", ln=True)
+        pdf.set_font("Helvetica", "", 9)
+        pdf.multi_cell(0, 5, clean(d.get("weaknesses", "")))
         pdf.ln(1)
-        pdf_multi(pdf, "Strengths: ", d.get("strengths", ""))
-        pdf_multi(pdf, "Gaps:      ", d.get("weaknesses", ""))
 
         # ── Interview Questions ──
         if shortlisted and r.get("questions"):
             pdf.set_font("Helvetica", "B", 9)
             pdf.cell(0, 7, "Interview Questions:", ln=True)
-            pdf.set_font("Helvetica", "", 8)
+            pdf.set_font("Helvetica", "", 9)
             for j, q in enumerate(r["questions"], 1):
-                q_safe = safe(f"Q{j}. {q}")
-                pdf.multi_cell(0, 5, q_safe)
+                pdf.multi_cell(0, 5, clean(f"Q{j}. {q}"))
                 pdf.ln(1)
 
         pdf.ln(2)
