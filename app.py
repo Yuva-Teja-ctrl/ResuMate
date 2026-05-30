@@ -41,20 +41,14 @@ st.markdown("""
 st.markdown("""
 <div class="hero">
     <div style="display:flex;align-items:center;justify-content:center;gap:18px;margin-bottom:10px">
-        <!-- SVG Logo -->
         <svg width="72" height="72" viewBox="0 0 72 72" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <!-- Outer ring -->
           <circle cx="36" cy="36" r="34" stroke="rgba(255,255,255,0.25)" stroke-width="2"/>
-          <!-- Document body -->
           <rect x="20" y="16" width="28" height="36" rx="4" fill="rgba(255,255,255,0.15)" stroke="white" stroke-width="1.8"/>
-          <!-- Folded corner -->
           <path d="M40 16 L48 24 L40 24 Z" fill="white" opacity="0.4"/>
           <path d="M40 16 L48 24 H40 V16 Z" fill="white" opacity="0.6"/>
-          <!-- Lines on document -->
           <line x1="26" y1="30" x2="42" y2="30" stroke="white" stroke-width="1.8" stroke-linecap="round" opacity="0.8"/>
           <line x1="26" y1="36" x2="42" y2="36" stroke="white" stroke-width="1.8" stroke-linecap="round" opacity="0.8"/>
           <line x1="26" y1="42" x2="36" y2="42" stroke="white" stroke-width="1.8" stroke-linecap="round" opacity="0.8"/>
-          <!-- Checkmark circle -->
           <circle cx="52" cy="52" r="11" fill="#22c55e"/>
           <path d="M46.5 52 L50.5 56 L57.5 48" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
         </svg>
@@ -102,16 +96,29 @@ with st.sidebar:
 # ── HELPERS ──────────────────────────────────────────────────
 
 def extract_text_from_pdf(uploaded_file):
+    """Extract text from PDF with multiple fallback strategies."""
     text = ""
-    with pdfplumber.open(uploaded_file) as pdf:
-        for page in pdf.pages:
-            t = page.extract_text()
-            if t:
-                text += t + "\n"
+    try:
+        with pdfplumber.open(uploaded_file) as pdf:
+            for page in pdf.pages:
+                # Strategy 1: Normal text extraction
+                t = page.extract_text()
+                if t and t.strip():
+                    text += t + "\n"
+                else:
+                    # Strategy 2: Word-level extraction fallback
+                    try:
+                        words = page.extract_words()
+                        if words:
+                            text += " ".join([w["text"] for w in words]) + "\n"
+                    except Exception:
+                        pass
+    except Exception as e:
+        st.warning(f"⚠️ Could not open PDF: {e}")
+        return ""
     return text.strip()
 
 def score_resume(resume_text, job_role, skills, min_experience="", education_pref="", certifications=""):
-    # Dynamic weights — only active when recruiter specifies that criterion
     num_optional = sum([bool(min_experience), bool(education_pref), bool(certifications)])
 
     if num_optional == 0:
@@ -129,14 +136,12 @@ def score_resume(resume_text, job_role, skills, min_experience="", education_pre
     else:
         w_skills, w_exp, w_edu, w_cert = 40, 20, 20, 20
 
-    # Build requirements block
     req_lines = [f"- Required Skills: {skills}"]
     if min_experience: req_lines.append(f"- Minimum Experience: {min_experience} years")
     if education_pref: req_lines.append(f"- Preferred Education: {education_pref}")
     if certifications:  req_lines.append(f"- Preferred Certifications: {certifications}")
     requirements = "\n".join(req_lines)
 
-    # Build scoring weights block
     weight_lines = [
         f"- Skills match:        {w_skills} pts" + (" (ONLY criterion)" if num_optional == 0 else ""),
         f"- Experience match:    {w_exp} pts" + (" (NOT specified — award 0)" if not min_experience else f" (required: {min_experience}+ yrs)"),
@@ -145,7 +150,6 @@ def score_resume(resume_text, job_role, skills, min_experience="", education_pre
     ]
     weights = "\n".join(weight_lines)
 
-    # Build JSON template as a plain string (no f-string brace issues)
     json_template = (
         '{\n'
         '  "score": <integer 0-100>,\n'
@@ -199,6 +203,7 @@ Return ONLY this JSON object, no markdown fences, no explanation:
 """
 
     client = st.session_state.get('groq_client') or Groq(api_key=st.session_state.get('api_key',''))
+    raw = ""
     for attempt in range(3):
         try:
             response = client.chat.completions.create(
@@ -214,39 +219,66 @@ Return ONLY this JSON object, no markdown fences, no explanation:
                 time.sleep(20 + attempt * 10)
             else:
                 raise e
+
+    # Clean markdown fences if present
     raw = re.sub(r"```(?:json)?", "", raw).strip().rstrip("`").strip()
 
+    # Attempt 1: Direct JSON parse
     try:
         data = json.loads(raw)
-        # Server-side validation: enforce score = sum of breakdown
         sb = data.get("score_breakdown", {})
         computed = (sb.get("skills_score", 0) + sb.get("experience_score", 0) +
                     sb.get("education_score", 0) + sb.get("certification_score", 0))
         if abs(computed - data.get("score", 0)) > 2:
-            data["score"] = computed  # correct drift
+            data["score"] = computed
         return data
     except Exception:
+        pass
+
+    # Attempt 2: Find JSON object anywhere in response
+    try:
         m = re.search(r'\{.*\}', raw, re.DOTALL)
         if m:
-            try:
-                data = json.loads(m.group())
-                sb = data.get("score_breakdown", {})
-                computed = (sb.get("skills_score", 0) + sb.get("experience_score", 0) +
-                            sb.get("education_score", 0) + sb.get("certification_score", 0))
-                data["score"] = computed
-                return data
-            except Exception:
-                pass
-        return {
-            "score": 0, "candidate_name": "Parse Error",
-            "matched_skills": [], "missing_skills": [],
-            "experience_years": "N/A",
-            "score_breakdown": {"skills_score": 0, "experience_score": 0,
-                                "education_score": 0, "certification_score": 0},
-            "education": {"highest_degree": "N/A", "institution": "N/A", "graduation_year": "N/A"},
-            "certifications": [], "strengths": "Parse error.", "weaknesses": "Parse error.",
-            "education_match": "N/A", "certification_match": "N/A"
-        }
+            data = json.loads(m.group())
+            sb = data.get("score_breakdown", {})
+            computed = (sb.get("skills_score", 0) + sb.get("experience_score", 0) +
+                        sb.get("education_score", 0) + sb.get("certification_score", 0))
+            data["score"] = computed
+            return data
+    except Exception:
+        pass
+
+    # Attempt 3: Fix truncated JSON by closing open braces
+    try:
+        fixed = raw
+        open_braces = raw.count('{') - raw.count('}')
+        open_brackets = raw.count('[') - raw.count(']')
+        if open_brackets > 0:
+            fixed += ']' * open_brackets
+        if open_braces > 0:
+            fixed += '}' * open_braces
+        data = json.loads(fixed)
+        sb = data.get("score_breakdown", {})
+        computed = (sb.get("skills_score", 0) + sb.get("experience_score", 0) +
+                    sb.get("education_score", 0) + sb.get("certification_score", 0))
+        data["score"] = computed
+        return data
+    except Exception:
+        pass
+
+    # Final fallback — could not parse
+    st.warning("⚠️ Could not parse AI response for one resume. It may be a scanned/image PDF or the AI returned an unexpected format.")
+    return {
+        "score": 0, "candidate_name": "Unreadable Resume",
+        "matched_skills": [], "missing_skills": [],
+        "experience_years": "N/A",
+        "score_breakdown": {"skills_score": 0, "experience_score": 0,
+                            "education_score": 0, "certification_score": 0},
+        "education": {"highest_degree": "N/A", "institution": "N/A", "graduation_year": "N/A"},
+        "certifications": [], "strengths": "Could not parse resume.",
+        "weaknesses": "Could not parse resume.",
+        "education_match": "N/A", "certification_match": "N/A"
+    }
 
 def generate_interview_questions(resume_text, job_role, skills, candidate_name, min_experience="", education_pref="", certifications=""):
     ctx = ""
@@ -278,7 +310,9 @@ OUTPUT FORMAT - Return ONLY this JSON array, nothing else:
 ]
 
 Rules: Each question must be complete and end with ?. No truncation. No explanation outside the array."""
+
     client = st.session_state.get("groq_client") or Groq(api_key=st.session_state.get("api_key",""))
+    raw = ""
     for attempt in range(3):
         try:
             response = client.chat.completions.create(
@@ -294,23 +328,32 @@ Rules: Each question must be complete and end with ?. No truncation. No explanat
                 time.sleep(20 + attempt * 10)
             else:
                 raise e
+
     raw = re.sub(r"```(?:json)?", "", raw).strip().rstrip("`").strip()
-    # Fix incomplete last item if JSON was cut off
+
+    # Fix incomplete JSON array if truncated
     if raw.count('[') > raw.count(']'):
-        raw = raw.rstrip(',').rstrip() + ']'  
+        raw = raw.rstrip(',').rstrip() + ']'
+
+    # Attempt 1: Direct parse
     try:
         q = json.loads(raw)
-        # Filter out any incomplete questions (not ending with ?)
         q = [item for item in q if isinstance(item, str) and len(item) > 10]
         return q if isinstance(q, list) else []
-    except:
+    except Exception:
+        pass
+
+    # Attempt 2: Find array anywhere in response
+    try:
         m = re.search(r'\[.*\]', raw, re.DOTALL)
         if m:
-            try:
-                return json.loads(m.group())
-            except:
-                pass
-        return [l.strip().lstrip("0123456789.-) ") for l in raw.split("\n") if l.strip()][:10]
+            q = json.loads(m.group())
+            return [item for item in q if isinstance(item, str) and len(item) > 10]
+    except Exception:
+        pass
+
+    # Attempt 3: Line by line fallback
+    return [l.strip().lstrip("0123456789.-) ") for l in raw.split("\n") if l.strip()][:10]
 
 def score_badge(score):
     if score >= 70: return f'<span class="score-high">⭐ {score}/100</span>'
@@ -325,7 +368,6 @@ def match_badge(label, text):
     return f'<span style="{st_color};border-radius:8px;padding:3px 10px;font-size:0.82rem;font-weight:600;margin-right:6px">{label}: {text}</span>'
 
 def clean(text):
-    """Remove emojis and non-printable characters."""
     import unicodedata
     text = str(text)
     text = unicodedata.normalize("NFKD", text)
@@ -341,16 +383,7 @@ def clean(text):
 
 def generate_pdf_report(results, job_role, skills, shortlist_count, min_experience="", education_pref="", certifications=""):
     buffer = io.BytesIO()
-
-    doc = SimpleDocTemplate(
-        buffer,
-        pagesize=A4,
-        rightMargin=20*mm,
-        leftMargin=20*mm,
-        topMargin=20*mm,
-        bottomMargin=20*mm
-    )
-
+    doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=20*mm, leftMargin=20*mm, topMargin=20*mm, bottomMargin=20*mm)
     styles = getSampleStyleSheet()
     style_normal   = ParagraphStyle("normal",   parent=styles["Normal"],   fontSize=9,  leading=14, spaceAfter=4)
     style_bold     = ParagraphStyle("bold",     parent=styles["Normal"],   fontSize=9,  leading=14, spaceAfter=4, fontName="Helvetica-Bold")
@@ -359,10 +392,7 @@ def generate_pdf_report(results, job_role, skills, shortlist_count, min_experien
     style_h2       = ParagraphStyle("h2",       parent=styles["Normal"],   fontSize=12, leading=16, spaceAfter=4, fontName="Helvetica-Bold")
     style_h3       = ParagraphStyle("h3",       parent=styles["Normal"],   fontSize=9,  leading=14, spaceAfter=2, fontName="Helvetica-Bold")
     style_q        = ParagraphStyle("q",        parent=styles["Normal"],   fontSize=9,  leading=14, spaceAfter=4, leftIndent=10)
-
     story = []
-
-    # ── Title ──
     story.append(Paragraph("ResuMate - Recruitment Report", style_title))
     story.append(Paragraph(clean(f"Job Role: {job_role}"), style_subtitle))
     story.append(Paragraph(clean(f"Required Skills: {skills}"), style_subtitle))
@@ -373,21 +403,16 @@ def generate_pdf_report(results, job_role, skills, shortlist_count, min_experien
     story.append(Spacer(1, 4*mm))
     story.append(HRFlowable(width="100%", thickness=1, color=colors.grey))
     story.append(Spacer(1, 4*mm))
-
     for i, r in enumerate(results):
         d = r["score_data"]
         edu = d.get("education", {})
         certs = d.get("certifications", [])
         shortlisted = i < shortlist_count
         sb = d.get("score_breakdown", {})
-
-        # ── Candidate Header ──
         status = "[SHORTLISTED]" if shortlisted else "[NOT SHORTLISTED]"
         name   = clean(d.get("candidate_name", "Unknown"))
         score  = d.get("score", 0)
         story.append(Paragraph(f"{status}  #{i+1}  {name}  |  Score: {score}/100", style_h2))
-
-        # ── Score Breakdown ──
         breakdown = clean(
             f"Skills: {sb.get('skills_score',0)} pts  |  "
             f"Experience: {sb.get('experience_score',0)} pts  |  "
@@ -396,48 +421,35 @@ def generate_pdf_report(results, job_role, skills, shortlist_count, min_experien
         )
         story.append(Paragraph(breakdown, style_normal))
         story.append(Spacer(1, 2*mm))
-
-        # ── Details ──
         def row(label, value):
             story.append(Paragraph(f"<b>{clean(label)}</b> {clean(str(value))}", style_normal))
-
         row("Experience:", d.get("experience_years", "N/A"))
-
         degree   = edu.get("highest_degree", "Not mentioned")
         institut = edu.get("institution", "Not mentioned")
         grad     = edu.get("graduation_year", "")
         edu_str  = degree
-        if institut and institut not in ("Not mentioned", ""):
-            edu_str += f", {institut}"
-        if grad and grad not in ("Not mentioned", ""):
-            edu_str += f" ({grad})"
+        if institut and institut not in ("Not mentioned", ""): edu_str += f", {institut}"
+        if grad and grad not in ("Not mentioned", ""): edu_str += f" ({grad})"
         row("Education:", edu_str)
         row("Education Match:", d.get("education_match", "N/A"))
-
         cert_str = ", ".join(certs) if certs else "None found"
         row("Certifications:", cert_str)
         row("Certification Match:", d.get("certification_match", "N/A"))
-
         matched = ", ".join(d.get("matched_skills", [])) or "None"
         missing = ", ".join(d.get("missing_skills", [])) or "None"
         row("Matched Skills:", matched)
         row("Missing Skills:", missing)
-
         story.append(Spacer(1, 2*mm))
         story.append(Paragraph(f"<b>Strengths:</b> {clean(d.get('strengths',''))}", style_normal))
         story.append(Paragraph(f"<b>Gaps:</b> {clean(d.get('weaknesses',''))}", style_normal))
-
-        # ── Interview Questions ──
         if shortlisted and r.get("questions"):
             story.append(Spacer(1, 2*mm))
             story.append(Paragraph("Interview Questions:", style_h3))
             for j, q in enumerate(r["questions"], 1):
                 story.append(Paragraph(clean(f"Q{j}. {q}"), style_q))
-
         story.append(Spacer(1, 4*mm))
         story.append(HRFlowable(width="100%", thickness=0.5, color=colors.lightgrey))
         story.append(Spacer(1, 4*mm))
-
     doc.build(story)
     buffer.seek(0)
     return buffer.read()
@@ -478,7 +490,11 @@ if active:
     st.success("**Active Filters:** " + "  |  ".join(active))
 
 st.markdown('<div class="section-title">📂 Upload Resumes</div>', unsafe_allow_html=True)
-uploaded_files = st.file_uploader("Upload PDF resumes (select multiple)", type=["pdf"], accept_multiple_files=True)
+uploaded_files = st.file_uploader(
+    "Upload PDF resumes (select multiple) — text-based PDFs only, not scanned images",
+    type=["pdf"],
+    accept_multiple_files=True
+)
 if uploaded_files:
     st.success(f"✅ {len(uploaded_files)} resume(s) ready for analysis")
 
@@ -507,8 +523,10 @@ if run:
         status_text.markdown(f"🔍 Analysing **{file.name}** ({idx+1}/{len(uploaded_files)})...")
         try:
             resume_text = extract_text_from_pdf(file)
-            if not resume_text:
-                st.warning(f"⚠️ No text in {file.name}. Skipping."); continue
+            if not resume_text or len(resume_text) < 50:
+                st.warning(f"⚠️ '{file.name}' appears to be a scanned or image-based PDF — no readable text found. Please upload a text-based PDF.")
+                progress.progress((idx+1)/len(uploaded_files))
+                continue
             score_data = score_resume(resume_text, job_role, skills, min_experience, education_pref, certifications)
             results.append({"filename": file.name, "resume_text": resume_text, "score_data": score_data, "questions": []})
         except Exception as e:
@@ -516,7 +534,7 @@ if run:
         progress.progress((idx+1)/len(uploaded_files))
 
     if not results:
-        st.error("No resumes processed. Check your files."); st.stop()
+        st.error("No resumes processed. Please make sure you upload text-based PDF resumes, not scanned images."); st.stop()
 
     results.sort(key=lambda x: x["score_data"].get("score",0), reverse=True)
     shortlist_count = min(shortlist_count, len(results))
