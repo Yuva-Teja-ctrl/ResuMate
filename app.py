@@ -65,26 +65,19 @@ with st.sidebar:
 # ── HELPERS ──────────────────────────────────────────────────
 
 def safe_edu(edu):
-    """Always return education as a dict regardless of what Groq returns."""
-    if isinstance(edu, dict):
-        return edu
-    if isinstance(edu, str):
-        return {"highest_degree": edu, "institution": "N/A", "graduation_year": "N/A"}
+    if isinstance(edu, dict): return edu
+    if isinstance(edu, str): return {"highest_degree": edu, "institution": "N/A", "graduation_year": "N/A"}
     return {"highest_degree": "N/A", "institution": "N/A", "graduation_year": "N/A"}
 
 def safe_list(val):
-    """Always return a list of strings."""
-    if isinstance(val, list):
-        return [str(v) for v in val]
-    if isinstance(val, str) and val:
-        return [val]
+    if isinstance(val, list): return [str(v) for v in val]
+    if isinstance(val, str) and val: return [val]
     return []
 
 def safe_str(val, default="N/A"):
     return str(val) if val is not None else default
 
 def normalize_result(data):
-    """Normalize all fields so downstream code never crashes."""
     edu = safe_edu(data.get("education", {}))
     sb = data.get("score_breakdown", {})
     if not isinstance(sb, dict):
@@ -92,11 +85,9 @@ def normalize_result(data):
     computed = sum([sb.get("skills_score",0), sb.get("experience_score",0),
                     sb.get("education_score",0), sb.get("certification_score",0)])
     score = data.get("score", computed)
-    if abs(computed - score) > 2:
-        score = computed
+    if abs(computed - score) > 2: score = computed
     return {
-        "score": int(score),
-        "score_breakdown": sb,
+        "score": int(score), "score_breakdown": sb,
         "candidate_name": safe_str(data.get("candidate_name"), "Unknown"),
         "matched_skills": safe_list(data.get("matched_skills")),
         "missing_skills": safe_list(data.get("missing_skills")),
@@ -140,25 +131,19 @@ def extract_text_from_pdf(uploaded_file):
     return text.strip()
 
 def parse_json_safe(raw):
-    """Try multiple strategies to extract JSON from raw LLM response."""
     raw = re.sub(r"```(?:json)?", "", raw).strip().rstrip("`").strip()
-    try:
-        return json.loads(raw)
-    except Exception:
-        pass
+    try: return json.loads(raw)
+    except Exception: pass
     try:
         m = re.search(r'\{.*\}', raw, re.DOTALL)
-        if m:
-            return json.loads(m.group())
-    except Exception:
-        pass
+        if m: return json.loads(m.group())
+    except Exception: pass
     try:
         fixed = raw
         fixed += ']' * max(0, raw.count('[') - raw.count(']'))
         fixed += '}' * max(0, raw.count('{') - raw.count('}'))
         return json.loads(fixed)
-    except Exception:
-        pass
+    except Exception: pass
     return None
 
 def get_weights(min_experience, education_pref, certifications):
@@ -168,59 +153,45 @@ def get_weights(min_experience, education_pref, certifications):
     elif n == 2: return 40, (30 if min_experience else 0), (30 if education_pref else 0), (30 if certifications else 0)
     else: return 40, 20, 20, 20
 
+def call_groq(client, messages, max_tokens=800, temperature=0.1):
+    for attempt in range(3):
+        try:
+            response = client.chat.completions.create(
+                model="llama-3.1-8b-instant",
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+            return response.choices[0].message.content.strip()
+        except Exception as e:
+            if "429" in str(e) and attempt < 2:
+                time.sleep(5 + attempt * 5)
+            else:
+                raise e
+    return ""
+
 def score_resume(resume_text, job_role, skills, min_experience="", education_pref="", certifications=""):
     w_skills, w_exp, w_edu, w_cert = get_weights(min_experience, education_pref, certifications)
-
-    prompt = f"""You are a resume scoring API. Respond with ONLY a valid JSON object — no text before or after.
+    prompt = f"""You are a resume scoring API. Respond with ONLY a valid JSON object.
 
 JOB ROLE: {job_role}
 REQUIRED SKILLS: {skills}
 EXPERIENCE REQUIRED: {min_experience or "Any"}
 EDUCATION PREFERRED: {education_pref or "Any"}
 CERTIFICATIONS PREFERRED: {certifications or "None"}
-
-SCORING WEIGHTS (total = 100):
-- Skills: {w_skills} pts | Experience: {w_exp} pts | Education: {w_edu} pts | Certifications: {w_cert} pts
+WEIGHTS: Skills={w_skills} Exp={w_exp} Edu={w_edu} Cert={w_cert} (total=100)
 
 RESUME:
-{resume_text[:3000]}
+{resume_text[:2000]}
 
-Respond ONLY with this JSON (fill in real values from the resume):
-{{
-  "score": 0,
-  "score_breakdown": {{"skills_score": 0, "experience_score": 0, "education_score": 0, "certification_score": 0}},
-  "candidate_name": "Full Name",
-  "matched_skills": ["skill1"],
-  "missing_skills": ["skill1"],
-  "experience_years": "X years",
-  "education": {{"highest_degree": "Degree", "institution": "University", "graduation_year": "Year"}},
-  "certifications": ["cert1"],
-  "strengths": "2-3 sentence summary.",
-  "weaknesses": "1-2 sentence summary.",
-  "education_match": "Good Match",
-  "certification_match": "None Found"
-}}"""
+Respond ONLY with this JSON:
+{{"score":0,"score_breakdown":{{"skills_score":0,"experience_score":0,"education_score":0,"certification_score":0}},"candidate_name":"Full Name","matched_skills":["skill1"],"missing_skills":["skill1"],"experience_years":"X years","education":{{"highest_degree":"Degree","institution":"University","graduation_year":"Year"}},"certifications":["cert1"],"strengths":"Summary.","weaknesses":"Gaps.","education_match":"Good Match","certification_match":"None Found"}}"""
 
     client = st.session_state.get('groq_client') or Groq(api_key=api_key)
-    raw = ""
-    for attempt in range(3):
-        try:
-            response = client.chat.completions.create(
-                model="llama-3.3-70b-versatile",
-                messages=[
-                    {"role": "system", "content": "You are a resume scoring API. Always respond with valid JSON only. Never include any text outside the JSON object."},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.1,
-                max_tokens=1500,
-            )
-            raw = response.choices[0].message.content.strip()
-            break
-        except Exception as e:
-            if "429" in str(e) and attempt < 2:
-                time.sleep(20 + attempt * 10)
-            else:
-                raise e
+    raw = call_groq(client, [
+        {"role": "system", "content": "You are a resume scoring API. Always respond with valid JSON only. No text outside the JSON."},
+        {"role": "user", "content": prompt}
+    ], max_tokens=800, temperature=0.1)
 
     data = parse_json_safe(raw)
     if data and isinstance(data, dict):
@@ -229,38 +200,21 @@ Respond ONLY with this JSON (fill in real values from the resume):
     return normalize_result({})
 
 def generate_interview_questions(resume_text, job_role, skills, candidate_name, min_experience="", education_pref="", certifications=""):
-    ctx = ""
-    if min_experience: ctx += f" | Experience: {min_experience}+ yrs"
-    if education_pref: ctx += f" | Education: {education_pref}"
-    if certifications: ctx += f" | Certs: {certifications}"
-
+    ctx = "".join([
+        (f" | Exp: {min_experience}+ yrs" if min_experience else ""),
+        (f" | Edu: {education_pref}" if education_pref else ""),
+        (f" | Certs: {certifications}" if certifications else ""),
+    ])
     prompt = f"""Generate exactly 10 interview questions. Return ONLY a JSON array of 10 strings.
-
 Job: {job_role} | Skills: {skills}{ctx}
-Resume: {resume_text[:1200]}
-
-Return ONLY: ["Question 1?", "Question 2?", ..., "Question 10?"]"""
+Resume: {resume_text[:800]}
+Return ONLY: ["Question 1?","Question 2?",...,"Question 10?"]"""
 
     client = st.session_state.get("groq_client") or Groq(api_key=api_key)
-    raw = ""
-    for attempt in range(3):
-        try:
-            response = client.chat.completions.create(
-                model="llama-3.3-70b-versatile",
-                messages=[
-                    {"role": "system", "content": "You are an interviewer API. Respond with a JSON array of exactly 10 questions. No other text."},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.3,
-                max_tokens=2000,
-            )
-            raw = response.choices[0].message.content.strip()
-            break
-        except Exception as e:
-            if "429" in str(e) and attempt < 2:
-                time.sleep(20 + attempt * 10)
-            else:
-                raise e
+    raw = call_groq(client, [
+        {"role": "system", "content": "You are an interviewer API. Respond with a JSON array of exactly 10 questions. No other text."},
+        {"role": "user", "content": prompt}
+    ], max_tokens=1200, temperature=0.3)
 
     raw = re.sub(r"```(?:json)?", "", raw).strip().rstrip("`").strip()
     if raw.count('[') > raw.count(']'):
@@ -268,14 +222,12 @@ Return ONLY: ["Question 1?", "Question 2?", ..., "Question 10?"]"""
     try:
         q = json.loads(raw)
         return [item for item in q if isinstance(item, str) and len(item) > 10]
-    except Exception:
-        pass
+    except Exception: pass
     try:
         m = re.search(r'\[.*\]', raw, re.DOTALL)
         if m:
             return [item for item in json.loads(m.group()) if isinstance(item, str) and len(item) > 10]
-    except Exception:
-        pass
+    except Exception: pass
     return [l.strip().lstrip("0123456789.-) ") for l in raw.split("\n") if l.strip()][:10]
 
 def score_badge(score):
@@ -312,7 +264,6 @@ def generate_pdf_report(results, job_role, skills, shortlist_count, min_experien
                  f"Total: {len(results)}  |  Shortlisted: {shortlist_count}"]:
         if line: story.append(Paragraph(clean(line), ss))
     story += [Spacer(1, 4*mm), HRFlowable(width="100%", thickness=1, color=colors.grey), Spacer(1, 4*mm)]
-
     for i, r in enumerate(results):
         d = r["score_data"]
         edu = safe_edu(d.get("education", {}))
@@ -322,7 +273,6 @@ def generate_pdf_report(results, job_role, skills, shortlist_count, min_experien
         story.append(Paragraph(f"{status} #{i+1} {clean(d.get('candidate_name','Unknown'))} | Score: {d.get('score',0)}/100", sh2))
         story.append(Paragraph(clean(f"Skills: {sb.get('skills_score',0)} | Exp: {sb.get('experience_score',0)} | Edu: {sb.get('education_score',0)} | Cert: {sb.get('certification_score',0)}"), sn))
         story.append(Spacer(1, 2*mm))
-
         def row(label, value): story.append(Paragraph(f"<b>{clean(label)}</b> {clean(str(value))}", sn))
         row("Experience:", d.get("experience_years", "N/A"))
         edu_str = edu.get("highest_degree", "N/A")
@@ -334,13 +284,11 @@ def generate_pdf_report(results, job_role, skills, shortlist_count, min_experien
         row("Missing Skills:", ", ".join(safe_list(d.get("missing_skills"))) or "None")
         story.append(Paragraph(f"<b>Strengths:</b> {clean(d.get('strengths',''))}", sn))
         story.append(Paragraph(f"<b>Gaps:</b> {clean(d.get('weaknesses',''))}", sn))
-
         if i < shortlist_count and r.get("questions"):
             story += [Spacer(1,2*mm), Paragraph("Interview Questions:", sh3)]
             for j, q in enumerate(r["questions"], 1):
                 story.append(Paragraph(clean(f"Q{j}. {q}"), sq))
         story += [Spacer(1,4*mm), HRFlowable(width="100%", thickness=0.5, color=colors.lightgrey), Spacer(1,4*mm)]
-
     doc.build(story)
     buffer.seek(0)
     return buffer.read()
