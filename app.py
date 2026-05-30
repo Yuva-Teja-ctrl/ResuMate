@@ -449,7 +449,11 @@ def generate_pdf_report(results, job_role, skills, shortlist_count, min_experien
     story.append(Spacer(1, 4*mm))
     for i, r in enumerate(results):
         d = r["score_data"]
-        edu = d.get("education", {})
+        edu = d.get("education", {});
+    if isinstance(edu, str):
+        edu = {"highest_degree": edu, "institution": "N/A", "graduation_year": "N/A"};
+    if not isinstance(edu, dict):
+        edu = {"highest_degree": "N/A", "institution": "N/A", "graduation_year": "N/A"};
         certs = d.get("certifications", [])
         shortlisted = i < shortlist_count
         sb = d.get("score_breakdown", {})
@@ -610,7 +614,13 @@ if run:
     # ── TABLE ──
     table_data = []
     for i,r in enumerate(results):
-        d = r["score_data"]; edu = d.get("education",{}); certs = d.get("certifications",[])
+        d = r["score_data"]; 
+        edu = d.get("education", {});
+    if isinstance(edu, str):
+        edu = {"highest_degree": edu, "institution": "N/A", "graduation_year": "N/A"};
+    if not isinstance(edu, dict):
+        edu = {"highest_degree": "N/A", "institution": "N/A", "graduation_year": "N/A"}; 
+        certs = d.get("certifications",[])
         table_data.append({
             "Rank": f"#{i+1}",
             "Status": "✅ Shortlisted" if i < shortlist_count else "❌ Not Shortlisted",
@@ -633,7 +643,13 @@ if run:
     # ── DETAIL CARDS ──
     st.markdown('<div class="section-title">🔍 Detailed Candidate Analysis</div>', unsafe_allow_html=True)
     for i,r in enumerate(results):
-        d = r["score_data"]; edu = d.get("education",{}); certs = d.get("certifications",[])
+        d = r["score_data"]; 
+        edu = d.get("education", {});
+    if isinstance(edu, str):
+        edu = {"highest_degree": edu, "institution": "N/A", "graduation_year": "N/A"};
+    if not isinstance(edu, dict):
+        edu = {"highest_degree": "N/A", "institution": "N/A", "graduation_year": "N/A"};
+        certs = d.get("certifications",[])
         shortlisted = i < shortlist_count
         badge = '<span class="shortlisted-badge">✅ SHORTLISTED</span>' if shortlisted else ""
         cert_html = "".join([f'<span class="cert-item">🏅 {c}</span>' for c in certs]) if certs else '<span style="color:#94a3b8;font-size:0.9rem">None found</span>'
