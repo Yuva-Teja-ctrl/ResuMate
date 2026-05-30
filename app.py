@@ -197,49 +197,49 @@ def score_resume(resume_text, job_role, skills, min_experience="", education_pre
         '}'
     )
 
-prompt = f"""INSTRUCTIONS: You are a resume scoring API. You must respond with ONLY a JSON object. No other text before or after. No explanation. No resume content. ONLY the JSON object.
-
-JOB ROLE: {job_role}
-REQUIRED SKILLS: {skills}
-EXPERIENCE REQUIRED: {min_experience if min_experience else "Any"}
-EDUCATION PREFERRED: {education_pref if education_pref else "Any"}
-CERTIFICATIONS PREFERRED: {certifications if certifications else "None"}
-
-SCORING WEIGHTS:
-- Skills: {w_skills} points
-- Experience: {w_exp} points  
-- Education: {w_edu} points
-- Certifications: {w_cert} points
-
-RESUME TEXT:
-{resume_text[:3000]}
-
-YOU MUST RESPOND WITH ONLY THIS JSON AND NOTHING ELSE:
-{{
-  "score": 0,
-  "score_breakdown": {{
-    "skills_score": 0,
-    "experience_score": 0,
-    "education_score": 0,
-    "certification_score": 0
-  }},
-  "candidate_name": "Full Name Here",
-  "matched_skills": ["skill1"],
-  "missing_skills": ["skill1"],
-  "experience_years": "X years",
-  "education": {{
-    "highest_degree": "Degree Name",
-    "institution": "University Name",
-    "graduation_year": "Year"
-  }},
-  "certifications": ["cert1"],
-  "strengths": "2-3 sentence summary.",
-  "weaknesses": "1-2 sentence summary.",
-  "education_match": "Good Match",
-  "certification_match": "None Found"
-}}
-
-REPLACE ALL 0 VALUES AND PLACEHOLDER TEXT WITH ACTUAL VALUES FROM THE RESUME. RESPOND WITH JSON ONLY."""
+    prompt = f"""INSTRUCTIONS: You are a resume scoring API. You must respond with ONLY a JSON object. No other text before or after. No explanation. No resume content. ONLY the JSON object.
+    
+    JOB ROLE: {job_role}
+    REQUIRED SKILLS: {skills}
+    EXPERIENCE REQUIRED: {min_experience if min_experience else "Any"}
+    EDUCATION PREFERRED: {education_pref if education_pref else "Any"}
+    CERTIFICATIONS PREFERRED: {certifications if certifications else "None"}
+    
+    SCORING WEIGHTS:
+    - Skills: {w_skills} points
+    - Experience: {w_exp} points  
+    - Education: {w_edu} points
+    - Certifications: {w_cert} points
+    
+    RESUME TEXT:
+    {resume_text[:3000]}
+    
+    YOU MUST RESPOND WITH ONLY THIS JSON AND NOTHING ELSE:
+    {{
+      "score": 0,
+      "score_breakdown": {{
+        "skills_score": 0,
+        "experience_score": 0,
+        "education_score": 0,
+        "certification_score": 0
+      }},
+      "candidate_name": "Full Name Here",
+      "matched_skills": ["skill1"],
+      "missing_skills": ["skill1"],
+      "experience_years": "X years",
+      "education": {{
+        "highest_degree": "Degree Name",
+        "institution": "University Name",
+        "graduation_year": "Year"
+      }},
+      "certifications": ["cert1"],
+      "strengths": "2-3 sentence summary.",
+      "weaknesses": "1-2 sentence summary.",
+      "education_match": "Good Match",
+      "certification_match": "None Found"
+    }}
+    
+    REPLACE ALL 0 VALUES AND PLACEHOLDER TEXT WITH ACTUAL VALUES FROM THE RESUME. RESPOND WITH JSON ONLY."""
 
     client = st.session_state.get('groq_client') or Groq(api_key=st.session_state.get('api_key',''))
     raw = ""
