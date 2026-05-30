@@ -287,7 +287,7 @@ Return ONLY this JSON object, no markdown fences, no explanation:
     except Exception:
         pass
 # Final fallback — could not parse
-st.warning(f"⚠️ Could not parse AI response. Raw output was: {raw[:500]}")
+    st.warning(f"⚠️ Could not parse AI response. Raw output was: {raw[:500]}")
     return {
         "score": 0, "candidate_name": "Unreadable Resume",
         "matched_skills": [], "missing_skills": [],
