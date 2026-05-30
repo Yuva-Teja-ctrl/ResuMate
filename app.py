@@ -96,17 +96,17 @@ with st.sidebar:
 # ── HELPERS ──────────────────────────────────────────────────
 
 def extract_text_from_pdf(uploaded_file):
-    """Extract text from PDF with multiple fallback strategies."""
+    """Extract text from PDF with OCR fallback for scanned/image-based PDFs."""
     text = ""
     try:
         with pdfplumber.open(uploaded_file) as pdf:
             for page in pdf.pages:
-                # Strategy 1: Normal text extraction
+             # Normal text extraction
                 t = page.extract_text()
                 if t and t.strip():
                     text += t + "\n"
                 else:
-                    # Strategy 2: Word-level extraction fallback
+                    # Word-level extraction 
                     try:
                         words = page.extract_words()
                         if words:
@@ -116,6 +116,27 @@ def extract_text_from_pdf(uploaded_file):
     except Exception as e:
         st.warning(f"⚠️ Could not open PDF: {e}")
         return ""
+
+    #  OCR for scanned/image-based PDFs
+    if not text or len(text.strip()) < 50:
+        try:
+            import pytesseract
+            from pdf2image import convert_from_bytes
+            from PIL import Image
+
+            st.info(f"🔍 Detected scanned PDF — running OCR...")
+            uploaded_file.seek(0)
+            images = convert_from_bytes(uploaded_file.read(), dpi=200)
+            ocr_text = ""
+            for img in images:
+                ocr_text += pytesseract.image_to_string(img) + "\n"
+            if ocr_text.strip():
+                st.success("✅ OCR completed successfully.")
+                return ocr_text.strip()
+        except Exception as e:
+            st.warning(f"⚠️ OCR failed: {e}")
+            return ""
+
     return text.strip()
 
 def score_resume(resume_text, job_role, skills, min_experience="", education_pref="", certifications=""):
@@ -220,10 +241,10 @@ Return ONLY this JSON object, no markdown fences, no explanation:
             else:
                 raise e
 
-    # Clean markdown fences if present
+    
     raw = re.sub(r"```(?:json)?", "", raw).strip().rstrip("`").strip()
 
-    # Attempt 1: Direct JSON parse
+    
     try:
         data = json.loads(raw)
         sb = data.get("score_breakdown", {})
@@ -235,7 +256,7 @@ Return ONLY this JSON object, no markdown fences, no explanation:
     except Exception:
         pass
 
-    # Attempt 2: Find JSON object anywhere in response
+    
     try:
         m = re.search(r'\{.*\}', raw, re.DOTALL)
         if m:
@@ -248,7 +269,7 @@ Return ONLY this JSON object, no markdown fences, no explanation:
     except Exception:
         pass
 
-    # Attempt 3: Fix truncated JSON by closing open braces
+    
     try:
         fixed = raw
         open_braces = raw.count('{') - raw.count('}')
@@ -266,7 +287,7 @@ Return ONLY this JSON object, no markdown fences, no explanation:
     except Exception:
         pass
 
-    # Final fallback — could not parse
+    
     st.warning("⚠️ Could not parse AI response for one resume. It may be a scanned/image PDF or the AI returned an unexpected format.")
     return {
         "score": 0, "candidate_name": "Unreadable Resume",
@@ -331,11 +352,11 @@ Rules: Each question must be complete and end with ?. No truncation. No explanat
 
     raw = re.sub(r"```(?:json)?", "", raw).strip().rstrip("`").strip()
 
-    # Fix incomplete JSON array if truncated
+    
     if raw.count('[') > raw.count(']'):
         raw = raw.rstrip(',').rstrip() + ']'
 
-    # Attempt 1: Direct parse
+    
     try:
         q = json.loads(raw)
         q = [item for item in q if isinstance(item, str) and len(item) > 10]
@@ -343,7 +364,7 @@ Rules: Each question must be complete and end with ?. No truncation. No explanat
     except Exception:
         pass
 
-    # Attempt 2: Find array anywhere in response
+   
     try:
         m = re.search(r'\[.*\]', raw, re.DOTALL)
         if m:
@@ -352,7 +373,7 @@ Rules: Each question must be complete and end with ?. No truncation. No explanat
     except Exception:
         pass
 
-    # Attempt 3: Line by line fallback
+    
     return [l.strip().lstrip("0123456789.-) ") for l in raw.split("\n") if l.strip()][:10]
 
 def score_badge(score):
