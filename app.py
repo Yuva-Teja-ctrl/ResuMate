@@ -197,31 +197,49 @@ def score_resume(resume_text, job_role, skills, min_experience="", education_pre
         '}'
     )
 
-    prompt = f"""You are an expert senior recruiter with 15 years of experience.
-
-Carefully analyze the resume below against the job requirements.
-Calculate a score out of 100 using EXACTLY the weights provided.
+prompt = f"""INSTRUCTIONS: You are a resume scoring API. You must respond with ONLY a JSON object. No other text before or after. No explanation. No resume content. ONLY the JSON object.
 
 JOB ROLE: {job_role}
+REQUIRED SKILLS: {skills}
+EXPERIENCE REQUIRED: {min_experience if min_experience else "Any"}
+EDUCATION PREFERRED: {education_pref if education_pref else "Any"}
+CERTIFICATIONS PREFERRED: {certifications if certifications else "None"}
 
-REQUIREMENTS:
-{requirements}
+SCORING WEIGHTS:
+- Skills: {w_skills} points
+- Experience: {w_exp} points  
+- Education: {w_edu} points
+- Certifications: {w_cert} points
 
-SCORING WEIGHTS (must total 100):
-{weights}
+RESUME TEXT:
+{resume_text[:3000]}
 
-IMPORTANT RULES:
-1. Calculate each sub-score first, then add them for the final score.
-2. For any criterion with 0 pts weight, always set its score to 0.
-3. The final "score" must equal the sum of all four sub-scores.
-4. skills_score + experience_score + education_score + certification_score = score
+YOU MUST RESPOND WITH ONLY THIS JSON AND NOTHING ELSE:
+{{
+  "score": 0,
+  "score_breakdown": {{
+    "skills_score": 0,
+    "experience_score": 0,
+    "education_score": 0,
+    "certification_score": 0
+  }},
+  "candidate_name": "Full Name Here",
+  "matched_skills": ["skill1"],
+  "missing_skills": ["skill1"],
+  "experience_years": "X years",
+  "education": {{
+    "highest_degree": "Degree Name",
+    "institution": "University Name",
+    "graduation_year": "Year"
+  }},
+  "certifications": ["cert1"],
+  "strengths": "2-3 sentence summary.",
+  "weaknesses": "1-2 sentence summary.",
+  "education_match": "Good Match",
+  "certification_match": "None Found"
+}}
 
-RESUME:
-{resume_text[:3500]}
-
-Return ONLY this JSON object, no markdown fences, no explanation:
-{json_template}
-"""
+REPLACE ALL 0 VALUES AND PLACEHOLDER TEXT WITH ACTUAL VALUES FROM THE RESUME. RESPOND WITH JSON ONLY."""
 
     client = st.session_state.get('groq_client') or Groq(api_key=st.session_state.get('api_key',''))
     raw = ""
@@ -229,8 +247,14 @@ Return ONLY this JSON object, no markdown fences, no explanation:
         try:
             response = client.chat.completions.create(
                 model="llama-3.3-70b-versatile",
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.2,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are a resume scoring API. You only respond with valid JSON objects. You never include any text outside the JSON. You never repeat or summarize the resume. You only output the JSON scoring result."
+                    },
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.1,
                 max_tokens=1500,
             )
             raw = response.choices[0].message.content.strip()
