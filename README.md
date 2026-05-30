@@ -181,6 +181,6 @@ MIT License — free to use, modify, and distribute.
 
 ## 👨‍💻 Built By
 
-**Yuva Teja** — Built as part of an internship portfolio project.
+**Yuva Teja Adigarla** — CS student building LLM-powered tools.
 
-> *"Most resume screeners target job seekers. ResuMate targets recruiters — making hiring 10x faster."*
+> *"Most resume screeners target job seekers. ResuMate targets recruiters — an agentic pipeline that autonomously processes bulk resumes and makes hiring decisions at scale."*
