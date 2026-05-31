@@ -106,6 +106,19 @@ def normalize_result(data):
         "certification_match": safe_str(data.get("certification_match"), "N/A"),
     }
 
+def clean_resume_text(text):
+    """Clean resume text to remove characters that confuse the LLM."""
+    # Remove non-printable characters
+    text = unicodedata.normalize("NFKD", text)
+    text = "".join(ch if (32 <= ord(ch) < 127 or ch in "\n\t") else " " for ch in text)
+    # Collapse excessive whitespace and blank lines
+    lines = [line.strip() for line in text.splitlines()]
+    lines = [line for line in lines if line]  # remove empty lines
+    text = "\n".join(lines)
+    # Collapse multiple spaces
+    text = re.sub(r" {2,}", " ", text)
+    return text.strip()
+
 def extract_text_from_pdf(uploaded_file):
     text = ""
     try:
@@ -131,10 +144,10 @@ def extract_text_from_pdf(uploaded_file):
             ocr_text = "".join(pytesseract.image_to_string(img) + "\n" for img in images)
             if ocr_text.strip():
                 st.success("✅ OCR completed successfully.")
-                return ocr_text.strip()
+                return clean_resume_text(ocr_text)
         except Exception as e:
             st.warning(f"⚠️ OCR failed: {e}")
-    return text.strip()
+    return clean_resume_text(text)
 
 def parse_json_safe(raw):
     raw = re.sub(r"```(?:json)?", "", raw).strip().rstrip("`").strip()
@@ -415,6 +428,7 @@ if run:
                 st.warning(f"⚠️ '{file.name}' — no readable text found. Skipping.")
                 progress.progress((idx+1)/len(uploaded_files))
                 continue
+            resume_text = clean_resume_text(resume_text)
             score_data = score_resume(resume_text, job_role, skills, min_experience, education_pref, certifications)
             results.append({"filename": file.name, "resume_text": resume_text, "score_data": score_data, "questions": []})
         except Exception as e:
@@ -423,6 +437,25 @@ if run:
 
     if not results:
         st.error("No resumes processed successfully."); st.stop()
+
+    # Debug: show extracted text for failed resumes
+    with st.expander("🔧 Debug — Raw extracted text (for troubleshooting)", expanded=False):
+        for idx, file in enumerate(uploaded_files):
+            file.seek(0)
+            try:
+                import pdfplumber as _pl
+                with _pl.open(file) as _pdf:
+                    _txt = ""
+                    for _page in _pdf.pages:
+                        _t = _page.extract_text()
+                        if _t: _txt += _t + "\n"
+                st.markdown(f"**{file.name}** — {len(_txt)} chars extracted")
+                if _txt:
+                    st.code(_txt[:500])
+                else:
+                    st.error(f"❌ No text extracted from {file.name}")
+            except Exception as _e:
+                st.error(f"{file.name}: {_e}")
 
     results.sort(key=lambda x: x["score_data"].get("score", 0), reverse=True)
     shortlist_count = min(shortlist_count, len(results))
