@@ -440,25 +440,6 @@ if run:
     if not results:
         st.error("No resumes processed successfully."); st.stop()
 
-    # Debug: show extracted text for failed resumes
-    with st.expander("🔧 Debug — Raw extracted text (for troubleshooting)", expanded=False):
-        for idx, file in enumerate(uploaded_files):
-            file.seek(0)
-            try:
-                import pdfplumber as _pl
-                with _pl.open(file) as _pdf:
-                    _txt = ""
-                    for _page in _pdf.pages:
-                        _t = _page.extract_text()
-                        if _t: _txt += _t + "\n"
-                st.markdown(f"**{file.name}** — {len(_txt)} chars extracted")
-                if _txt:
-                    st.code(_txt[:500])
-                else:
-                    st.error(f"❌ No text extracted from {file.name}")
-            except Exception as _e:
-                st.error(f"{file.name}: {_e}")
-
     results.sort(key=lambda x: x["score_data"].get("score", 0), reverse=True)
     shortlist_count = min(shortlist_count, len(results))
 
