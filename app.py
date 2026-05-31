@@ -65,9 +65,14 @@ with st.sidebar:
 # ── HELPERS ──────────────────────────────────────────────────
 
 def safe_edu(edu):
-    if isinstance(edu, dict): return edu
-    if isinstance(edu, str): return {"highest_degree": edu, "institution": "N/A", "graduation_year": "N/A"}
-    return {"highest_degree": "N/A", "institution": "N/A", "graduation_year": "N/A"}
+    base = {"highest_degree": "N/A", "institution": "N/A", "graduation_year": "N/A"}
+    if isinstance(edu, str):
+        base["highest_degree"] = edu
+        return base
+    if isinstance(edu, dict):
+        base.update({k: str(v) if v is not None else "N/A" for k, v in edu.items()})
+        return base
+    return base
 
 def safe_list(val):
     if isinstance(val, list): return [str(v) for v in val]
@@ -86,8 +91,9 @@ def normalize_result(data):
                     sb.get("education_score",0), sb.get("certification_score",0)])
     score = data.get("score", computed)
     if abs(computed - score) > 2: score = computed
+    score = max(0, min(100, int(score)))  # hard cap 0-100
     return {
-        "score": int(score), "score_breakdown": sb,
+        "score": score, "score_breakdown": sb,
         "candidate_name": safe_str(data.get("candidate_name"), "Unknown"),
         "matched_skills": safe_list(data.get("matched_skills")),
         "missing_skills": safe_list(data.get("missing_skills")),
@@ -153,11 +159,12 @@ def get_weights(min_experience, education_pref, certifications):
     elif n == 2: return 40, (30 if min_experience else 0), (30 if education_pref else 0), (30 if certifications else 0)
     else: return 40, 20, 20, 20
 
-def call_groq(client, messages, max_tokens=800, temperature=0.1):
+def call_groq(client, messages, max_tokens=800, temperature=0.1, fast=False):
+    model = "llama-3.1-8b-instant" if fast else "llama-3.3-70b-versatile"
     for attempt in range(3):
         try:
             response = client.chat.completions.create(
-                model="llama-3.1-8b-instant",
+                model=model,
                 messages=messages,
                 temperature=temperature,
                 max_tokens=max_tokens,
@@ -191,7 +198,7 @@ Respond ONLY with this JSON:
     raw = call_groq(client, [
         {"role": "system", "content": "You are a resume scoring API. Always respond with valid JSON only. No text outside the JSON."},
         {"role": "user", "content": prompt}
-    ], max_tokens=800, temperature=0.1)
+    ], max_tokens=800, temperature=0.1, fast=False)
 
     data = parse_json_safe(raw)
     if data and isinstance(data, dict):
@@ -214,7 +221,7 @@ Return ONLY: ["Question 1?","Question 2?",...,"Question 10?"]"""
     raw = call_groq(client, [
         {"role": "system", "content": "You are an interviewer API. Respond with a JSON array of exactly 10 questions. No other text."},
         {"role": "user", "content": prompt}
-    ], max_tokens=1200, temperature=0.3)
+    ], max_tokens=1200, temperature=0.3, fast=True)
 
     raw = re.sub(r"```(?:json)?", "", raw).strip().rstrip("`").strip()
     if raw.count('[') > raw.count(']'):
