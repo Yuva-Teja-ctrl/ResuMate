@@ -206,8 +206,10 @@ SCORING WEIGHTS (must total 100):
 - Education: {w_edu} pts
 - Certifications: {w_cert} pts
 
+IMPORTANT: Read the ENTIRE resume carefully. Education details (degree, university, graduation year) are often at the bottom. Always extract them if present.
+
 RESUME TEXT:
-{resume_text[:2000]}
+{resume_text[:4000]}
 
 OUTPUT (replace all placeholder values with real values from the resume above):
 {{
@@ -252,7 +254,7 @@ OUTPUT (replace all placeholder values with real values from the resume above):
                 "Return ONLY valid JSON. Use real values from the resume, never placeholder text.",
                 "",
                 "RESUME:",
-                resume_text[:2000],
+                resume_text[:4000],
                 "",
                 f"Job requires: {skills}",
                 "",
@@ -280,7 +282,7 @@ def generate_interview_questions(resume_text, job_role, skills, candidate_name, 
     ])
     prompt = f"""Generate exactly 10 interview questions. Return ONLY a JSON array of 10 strings.
 Job: {job_role} | Skills: {skills}{ctx}
-Resume: {resume_text[:800]}
+Resume: {resume_text[:1500]}
 Return ONLY: ["Question 1?","Question 2?",...,"Question 10?"]"""
 
     client = st.session_state.get("groq_client") or Groq(api_key=api_key)
