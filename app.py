@@ -229,7 +229,42 @@ OUTPUT (replace all placeholder values with real values from the resume above):
 
     data = parse_json_safe(raw)
     if data and isinstance(data, dict):
-        return normalize_result(data)
+        result = normalize_result(data)
+        # If model returned placeholder values, retry once with stricter prompt
+        name = result.get("candidate_name", "")
+        if name in ("Unknown", "Full Name Here", "Full Name", "") or result.get("score", 0) == 0:
+            retry_prompt = f"""Extract information from this resume and return JSON only.
+
+RESUME:
+{resume_text[:2000]}
+
+Return this JSON with REAL values from the resume (not placeholders):
+{{
+  "score": {w_skills},
+  "score_breakdown": {{"skills_score": {w_skills}, "experience_score": 0, "education_score": 0, "certification_score": 0}},
+  "candidate_name": "<REAL full name from resume>",
+  "matched_skills": ["<real skill>"],
+  "missing_skills": [],
+  "experience_years": "<real experience>",
+  "education": {{"highest_degree": "<real degree>", "institution": "<real university>", "graduation_year": "<real year>"}},
+  "certifications": [],
+  "strengths": "Candidate has relevant skills.",
+  "weaknesses": "Some skills missing.",
+  "education_match": "Not Mentioned",
+  "certification_match": "None Found"
+}}
+
+Job requires: {skills}"""
+            raw2 = call_groq(client, [
+                {"role": "system", "content": "Extract resume data and return only JSON. Never use placeholder values."},
+                {"role": "user", "content": retry_prompt}
+            ], max_tokens=1200, temperature=0.1, fast=False)
+            data2 = parse_json_safe(raw2)
+            if data2 and isinstance(data2, dict):
+                result2 = normalize_result(data2)
+                if result2.get("candidate_name", "Unknown") not in ("Unknown", "Full Name Here", "Full Name", ""):
+                    return result2
+        return result
     st.warning("⚠️ Could not parse AI response for one resume.")
     return normalize_result({})
 
