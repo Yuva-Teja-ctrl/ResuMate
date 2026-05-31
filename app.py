@@ -179,26 +179,53 @@ def call_groq(client, messages, max_tokens=800, temperature=0.1, fast=False):
 
 def score_resume(resume_text, job_role, skills, min_experience="", education_pref="", certifications=""):
     w_skills, w_exp, w_edu, w_cert = get_weights(min_experience, education_pref, certifications)
-    prompt = f"""You are a resume scoring API. Respond with ONLY a valid JSON object.
+    prompt = f"""You are a resume scoring API. Your ONLY output must be a valid JSON object. No explanation, no text before or after the JSON.
 
 JOB ROLE: {job_role}
 REQUIRED SKILLS: {skills}
 EXPERIENCE REQUIRED: {min_experience or "Any"}
 EDUCATION PREFERRED: {education_pref or "Any"}
 CERTIFICATIONS PREFERRED: {certifications or "None"}
-WEIGHTS: Skills={w_skills} Exp={w_exp} Edu={w_edu} Cert={w_cert} (total=100)
 
-RESUME:
+SCORING WEIGHTS (must total 100):
+- Skills: {w_skills} pts
+- Experience: {w_exp} pts
+- Education: {w_edu} pts
+- Certifications: {w_cert} pts
+
+RESUME TEXT:
 {resume_text[:2000]}
 
-Respond ONLY with this JSON:
-{{"score":0,"score_breakdown":{{"skills_score":0,"experience_score":0,"education_score":0,"certification_score":0}},"candidate_name":"Full Name","matched_skills":["skill1"],"missing_skills":["skill1"],"experience_years":"X years","education":{{"highest_degree":"Degree","institution":"University","graduation_year":"Year"}},"certifications":["cert1"],"strengths":"Summary.","weaknesses":"Gaps.","education_match":"Good Match","certification_match":"None Found"}}"""
+OUTPUT (replace all placeholder values with real values from the resume above):
+{{
+  "score": 0,
+  "score_breakdown": {{
+    "skills_score": 0,
+    "experience_score": 0,
+    "education_score": 0,
+    "certification_score": 0
+  }},
+  "candidate_name": "Full Name Here",
+  "matched_skills": ["skill1", "skill2"],
+  "missing_skills": ["skill1", "skill2"],
+  "experience_years": "X years",
+  "education": {{
+    "highest_degree": "Degree Name",
+    "institution": "University Name",
+    "graduation_year": "Year"
+  }},
+  "certifications": ["cert1"],
+  "strengths": "2-3 sentence summary of strengths.",
+  "weaknesses": "1-2 sentence summary of gaps.",
+  "education_match": "Good Match",
+  "certification_match": "None Found"
+}}"""
 
     client = st.session_state.get('groq_client') or Groq(api_key=api_key)
     raw = call_groq(client, [
-        {"role": "system", "content": "You are a resume scoring API. Always respond with valid JSON only. No text outside the JSON."},
+        {"role": "system", "content": "You are a resume scoring API. You only output valid JSON. Never include any text, explanation, or markdown outside the JSON object."},
         {"role": "user", "content": prompt}
-    ], max_tokens=800, temperature=0.1, fast=False)
+    ], max_tokens=1200, temperature=0.1, fast=False)
 
     data = parse_json_safe(raw)
     if data and isinstance(data, dict):
